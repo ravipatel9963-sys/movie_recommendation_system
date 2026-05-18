@@ -636,4 +636,4 @@ elif "Revenue" in page:
         st.plotly_chart(fig, use_container_width=True)
 
     elif not predict_clicked:
-        st.info("👆 Select a movie and click Predict to see the revenue forecast.")
+        st.info("👆 Select a movie and click Predict to see the revenue forecast.") 
