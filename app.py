@@ -4,7 +4,12 @@ import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.preprocessing import MinMaxScaler
+from sklearn.decomposition import TruncatedSVD
+from sklearn.linear_model import Ridge
+from sklearn.model_selection import cross_val_predict
+from sklearn.metrics import mean_squared_error, mean_absolute_error
 import plotly.express as px
+import plotly.graph_objects as go
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -16,172 +21,124 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ── CSS — Light IMDb-style theme ──────────────────────────────────────────────
+# ── CSS ───────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
 
 html, body, [class*="css"], .stApp {
     font-family: 'Inter', sans-serif !important;
-    background-color: #f5f5f5 !important;
+    background-color: #f0f2f6 !important;
     color: #1a1a1a !important;
 }
 
 /* ── Sidebar ── */
 div[data-testid="stSidebar"] {
-    background-color: #ffffff !important;
-    border-right: 1px solid #e0e0e0 !important;
-    padding-top: 1rem;
+    background-color: #f0f2f6 !important;
+    border-right: 1px solid #ddd !important;
 }
-div[data-testid="stSidebar"] label,
-div[data-testid="stSidebar"] p,
-div[data-testid="stSidebar"] span {
-    color: #1a1a1a !important;
-}
-div[data-testid="stSidebar"] .stRadio label { color: #333 !important; }
+div[data-testid="stSidebar"] * { color: #1a1a1a !important; }
+div[data-testid="stSidebar"] h1 { font-size: 1.4rem !important; font-weight: 800 !important; }
 
-/* IMDb logo block */
-.imdb-logo {
-    background: #F5C518;
-    color: #000;
-    font-size: 1.5rem;
-    font-weight: 900;
-    padding: 6px 14px;
-    border-radius: 6px;
-    display: inline-block;
-    letter-spacing: 1px;
-    margin-bottom: 1.5rem;
+/* Slider accent red */
+div[data-testid="stSlider"] [data-testid="stTickBar"],
+div[data-testid="stSlider"] .st-emotion-cache-1dp5vir,
+div[data-testid="stSlider"] [role="slider"] {
+    background-color: #E53935 !important;
+    color: #E53935 !important;
 }
+.stSlider [data-baseweb="slider"] [role="slider"] { background: #E53935 !important; border-color: #E53935 !important; }
 
-.sidebar-stat-label { font-size: 0.78rem; color: #888; text-transform: uppercase; letter-spacing: 0.05em; }
-.sidebar-stat-val   { font-size: 0.95rem; font-weight: 600; color: #1a1a1a; }
-
-/* ── Main area ── */
-.main-title {
-    font-size: 2.2rem;
-    font-weight: 700;
-    color: #1a1a1a;
-    margin-bottom: 0.2rem;
+/* Multiselect tag red */
+.stMultiSelect [data-baseweb="tag"] {
+    background-color: #E53935 !important;
+    color: #fff !important;
+    border-radius: 20px !important;
 }
-.main-sub {
-    font-size: 0.9rem;
-    color: #888;
-    margin-bottom: 1.5rem;
-}
-
-/* Search box */
-.stTextInput > div > div > input {
-    border: 2px solid #E53935 !important;
-    border-radius: 8px !important;
-    font-size: 1rem !important;
-    padding: 0.6rem 1rem !important;
-    background: #fff !important;
-    color: #1a1a1a !important;
-}
-.stTextInput > div > div > input:focus { box-shadow: 0 0 0 3px rgba(229,57,53,0.15) !important; }
-
-/* Select / Dropdown */
-.stSelectbox > div > div {
-    border-radius: 8px !important;
-    background: #fff !important;
-    border: 1px solid #ddd !important;
-}
+.stMultiSelect [data-baseweb="tag"] span { color: #fff !important; }
 
 /* Buttons */
 .stButton > button {
-    background: #E53935 !important;
+    background-color: #E53935 !important;
     color: #fff !important;
-    font-weight: 600 !important;
+    font-weight: 700 !important;
     border: none !important;
     border-radius: 8px !important;
-    padding: 0.55rem 1.4rem !important;
-    font-size: 0.95rem !important;
+    padding: 0.6rem 1.6rem !important;
+    font-size: 1rem !important;
 }
-.stButton > button:hover { background: #c62828 !important; }
+.stButton > button:hover { background-color: #c62828 !important; }
 
-/* Seed movie card */
+/* Tabs */
+button[data-baseweb="tab"] {
+    font-size: 0.9rem !important;
+    font-weight: 500 !important;
+    color: #555 !important;
+}
+button[data-baseweb="tab"][aria-selected="true"] {
+    color: #E53935 !important;
+    border-bottom: 2px solid #E53935 !important;
+}
+
+/* Movie result card */
+.rec-card {
+    background: #ffffff;
+    border-radius: 12px;
+    padding: 1.4rem 1.8rem;
+    margin-bottom: 1rem;
+    border: 1px solid #e0e0e0;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+}
+.rec-rank  { font-size: 0.85rem; color: #888; font-weight: 500; margin-bottom: 0.2rem; }
+.rec-title { font-size: 1.55rem; font-weight: 800; color: #1a1a1a; margin-bottom: 0.4rem; }
+.rec-meta  { font-size: 0.88rem; color: #555; margin-bottom: 0.7rem; display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
+.rec-badge {
+    display: inline-block;
+    background: #fde8e8;
+    color: #c62828;
+    border-radius: 20px;
+    padding: 3px 12px;
+    font-size: 0.78rem;
+    font-weight: 500;
+    margin-right: 4px;
+    margin-bottom: 6px;
+}
+.rec-desc { font-size: 0.92rem; color: #444; line-height: 1.6; margin-top: 0.6rem; }
+
+/* Seed card */
 .seed-card {
     background: #fff;
     border-radius: 12px;
-    padding: 1.2rem 1.6rem;
-    margin-bottom: 1.5rem;
-    border: 1px solid #e8e8e8;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    padding: 1.5rem 2rem;
+    margin: 1rem 0 1.5rem;
+    border: 1px solid #e0e0e0;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
 }
-.seed-title { font-size: 1.1rem; font-weight: 700; color: #1a1a1a; margin-bottom: 0.3rem; }
-.seed-meta  { font-size: 0.85rem; color: #666; }
+.seed-label { font-size: 0.78rem; color: #888; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.2rem; }
+.seed-big   { font-size: 2rem; font-weight: 800; color: #1a1a1a; }
+.seed-mid   { font-size: 1.4rem; font-weight: 700; color: #1a1a1a; }
 
-/* Results table header */
-.results-header {
-    font-size: 1.25rem;
-    font-weight: 700;
-    color: #1a1a1a;
-    margin: 1.5rem 0 1rem;
-    padding-bottom: 0.5rem;
-    border-bottom: 2px solid #E53935;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-}
+/* Stat numbers on homepage */
+.stat-label { font-size: 0.85rem; color: #888; margin-bottom: 0.1rem; }
+.stat-value { font-size: 2.5rem; font-weight: 800; color: #1a1a1a; }
 
-/* Column labels */
-.col-labels {
-    display: grid;
-    grid-template-columns: 2fr 1fr 1fr 1fr 1.5fr 1fr;
-    gap: 0;
-    padding: 0.5rem 1rem;
-    background: #f0f0f0;
-    border-radius: 8px 8px 0 0;
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: #888;
+/* IMDb logo */
+.imdb-badge {
+    background: #F5C518;
+    color: #000;
+    font-weight: 900;
+    font-size: 1.1rem;
+    padding: 4px 10px;
+    border-radius: 5px;
+    margin-right: 0.5rem;
+    letter-spacing: 1px;
+    display: inline-block;
 }
 
-/* Movie row card */
-.movie-row {
-    background: #fff;
-    border-bottom: 1px solid #f0f0f0;
-    display: grid;
-    grid-template-columns: 2fr 1fr 1fr 1fr 1.5fr 1fr;
-    gap: 0;
-    padding: 1rem 1rem;
-    align-items: center;
-    transition: background 0.15s;
-}
-.movie-row:hover { background: #fafafa; }
-.movie-row:last-child { border-radius: 0 0 8px 8px; border-bottom: none; }
+/* Metric display */
+.big-metric-label { font-size: 0.85rem; color: #888; margin-bottom: 0.2rem; }
+.big-metric-value { font-size: 2.2rem; font-weight: 800; color: #1a1a1a; }
 
-.row-title  { font-size: 1.35rem; font-weight: 700; color: #1a1a1a; }
-.row-genre  { font-size: 1rem; color: #444; font-weight: 400; }
-.row-rating { font-size: 1.1rem; font-weight: 600; color: #1a1a1a; }
-.row-year   { font-size: 1.1rem; color: #444; }
-.row-dir    { font-size: 1rem; color: #444; }
-.row-sim    { font-size: 1rem; font-weight: 600; color: #E53935; }
-.star-icon  { color: #F5C518; margin-right: 4px; }
-
-/* Metric cards */
-.metric-row { display: flex; gap: 1rem; margin-bottom: 1.5rem; }
-.metric-card {
-    background: #fff;
-    border-radius: 10px;
-    padding: 0.9rem 1.2rem;
-    flex: 1;
-    border: 1px solid #e8e8e8;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.05);
-}
-.metric-val   { font-size: 1.6rem; font-weight: 700; color: #1a1a1a; }
-.metric-label { font-size: 0.75rem; color: #888; text-transform: uppercase; letter-spacing: 0.06em; }
-
-/* Tabs */
-button[data-baseweb="tab"] { font-weight: 600 !important; font-size: 0.9rem !important; }
-button[data-baseweb="tab"][aria-selected="true"] { color: #E53935 !important; border-bottom-color: #E53935 !important; }
-
-/* Slider */
-.stSlider [data-testid="stTickBar"] { color: #888 !important; }
-
-/* Hide default header */
 #MainMenu, footer, header { visibility: hidden; }
 </style>
 """, unsafe_allow_html=True)
@@ -191,47 +148,49 @@ button[data-baseweb="tab"][aria-selected="true"] { color: #E53935 !important; bo
 @st.cache_data
 def load_data():
     df = pd.read_csv("cleaned_imdb.csv")
-    df = df.dropna(subset=["Title", "Genre", "Rating", "Year", "Director"])
-    for col in ["Genre", "Director", "Actors", "Description"]:
+    df = df.dropna(subset=["Title","Genre","Rating","Year","Director"])
+    for col in ["Genre","Director","Actors","Description"]:
         df[col] = df[col].fillna("")
     df["Metascore"] = df["Metascore"].fillna(df["Metascore"].median())
     df["Votes"]     = df["Votes"].fillna(0)
+    df["Revenue(Crores)"] = df["Revenue(Crores)"].fillna(0)
     return df.reset_index(drop=True)
 
-
 @st.cache_resource
-def build_model(_df):
+def build_tfidf(_df):
     df = _df.copy()
     df["text_soup"] = (
         df["Genre"].str.replace(",", " ") + " " +
         df["Director"].str.replace(" ", "") + " " +
-        df["Actors"].str.replace(",", "").str.replace(" ", "") + " " +
+        df["Actors"].str.replace(",","").str.replace(" ","") + " " +
         df["Description"]
     )
-    tfidf     = TfidfVectorizer(stop_words="english", max_features=5000, ngram_range=(1, 2))
+    tfidf     = TfidfVectorizer(stop_words="english", max_features=5000, ngram_range=(1,2))
     tfidf_mat = tfidf.fit_transform(df["text_soup"])
     scaler    = MinMaxScaler()
-    num_mat   = scaler.fit_transform(
-        df[["Rating", "Year", "Votes", "Runtime_(Minutes)"]].fillna(0)
-    )
+    num_mat   = scaler.fit_transform(df[["Rating","Year","Votes","Runtime_(Minutes)"]].fillna(0))
     return tfidf_mat, num_mat
 
-
-def recommend(title, df, tfidf_mat, num_mat, top_n=10):
+def get_recs(title, df, tfidf_mat, num_mat,
+             genres=None, yr=(2006,2016), min_rating=0.0, director="Any", top_n=8):
     mask = df["Title"].str.lower() == title.lower()
     if not mask.any():
         return None
     idx     = df[mask].index[0]
     txt_sim = cosine_similarity(tfidf_mat[idx], tfidf_mat).flatten()
-    num_sim = cosine_similarity(num_mat[idx].reshape(1, -1), num_mat).flatten()
+    num_sim = cosine_similarity(num_mat[idx].reshape(1,-1), num_mat).flatten()
     scores  = 0.70 * txt_sim + 0.30 * num_sim
     scores[idx] = -1
     out = df.copy()
-    out["Similarity"] = (scores * 100).round(2)
-    return out.sort_values("Similarity", ascending=False).head(top_n)
+    out["_score"] = scores
+    if genres:
+        out = out[out["Genre"].apply(lambda g: any(x.lower() in g.lower() for x in genres))]
+    out = out[(out["Year"] >= yr[0]) & (out["Year"] <= yr[1]) & (out["Rating"] >= min_rating)]
+    if director != "Any":
+        out = out[out["Director"] == director]
+    return out.sort_values("_score", ascending=False).head(top_n)
 
-
-def smart_search(df, genres, yr, min_rating, director, top_n):
+def browse_prefs(df, genres=None, yr=(2006,2016), min_rating=0.0, director="Any", top_n=8):
     out = df.copy()
     if genres:
         out = out[out["Genre"].apply(lambda g: any(x.lower() in g.lower() for x in genres))]
@@ -241,177 +200,171 @@ def smart_search(df, genres, yr, min_rating, director, top_n):
     if out.empty:
         return out
     out = out.copy()
-    out["Similarity"] = (
-        0.6 * out["Rating"] / 10 +
-        0.4 * (np.log1p(out["Votes"]) / np.log1p(out["Votes"].max() + 1))
-    ) * 100
-    out["Similarity"] = out["Similarity"].round(2)
-    return out.sort_values("Similarity", ascending=False).head(top_n)
+    vmax = out["Votes"].max() + 1
+    out["_score"] = 0.6*out["Rating"]/10 + 0.4*(np.log1p(out["Votes"])/np.log1p(vmax))
+    return out.sort_values("_score", ascending=False).head(top_n)
 
 
 # ── LOAD ──────────────────────────────────────────────────────────────────────
 df = load_data()
-tfidf_mat, num_mat = build_model(df)
+tfidf_mat, num_mat = build_tfidf(df)
 
 ALL_GENRES    = sorted(["Action","Adventure","Animation","Biography","Comedy",
                          "Crime","Drama","Fantasy","Horror","Mystery","Sci-Fi","Thriller"])
 ALL_DIRECTORS = ["Any"] + sorted(df["Director"].unique().tolist())
 ALL_TITLES    = sorted(df["Title"].unique().tolist())
+PLOT_BG       = "rgba(0,0,0,0)"
+FONT_COLOR    = "#1a1a1a"
+GRID_COLOR    = "rgba(0,0,0,0.07)"
+RED           = "#E53935"
 
 
 # ── SIDEBAR ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown('<div class="imdb-logo">IMDb</div>', unsafe_allow_html=True)
-    st.markdown("### Navigation")
-    page = st.radio("", ["🎬 Recommend", "📊 EDA", "🧠 Model Accuracy", "📝 Revenue Prediction"],
+    st.markdown("## Filters")
+    st.markdown("**Search Mode**")
+    mode = st.radio("", ["🎯 Find Similar Movies", "🔍 Browse by Preference"],
                     label_visibility="collapsed")
-
+    st.markdown("**Genre**")
+    genre_filter = st.multiselect("", ALL_GENRES, default=[], label_visibility="collapsed")
+    st.markdown("**Year Range**")
+    year_range   = st.slider("", int(df["Year"].min()), int(df["Year"].max()), (2008, 2016),
+                              label_visibility="collapsed")
+    st.markdown("**Min Rating**")
+    rating_min   = st.slider("", 1.0, 9.0, 6.0, 0.1, label_visibility="collapsed")
+    st.markdown("**Director**")
+    director_sel = st.selectbox("", ALL_DIRECTORS, label_visibility="collapsed")
+    st.markdown("**Number of Results**")
+    top_n        = st.slider("", 3, 20, 8, label_visibility="collapsed")
     st.markdown("---")
-    st.markdown('<span class="sidebar-stat-label">Dataset</span>', unsafe_allow_html=True)
-    st.markdown('<span class="sidebar-stat-val">cleaned_imdb.csv</span>', unsafe_allow_html=True)
-    st.markdown("")
-    st.markdown('<span class="sidebar-stat-label">Movies</span>', unsafe_allow_html=True)
-    st.markdown('<span class="sidebar-stat-val">' + str(len(df)) + '</span>', unsafe_allow_html=True)
-    st.markdown("")
-    st.markdown('<span class="sidebar-stat-label">Features</span>', unsafe_allow_html=True)
-    st.markdown('<span class="sidebar-stat-val">207 dims</span>', unsafe_allow_html=True)
-    st.markdown("")
-    st.markdown('<span class="sidebar-stat-label">Genres</span>', unsafe_allow_html=True)
-    st.markdown('<span class="sidebar-stat-val">' + str(len(ALL_GENRES)) + '</span>', unsafe_allow_html=True)
-    st.markdown("")
-    st.markdown('<span class="sidebar-stat-label">Years</span>', unsafe_allow_html=True)
-    st.markdown('<span class="sidebar-stat-val">' + str(int(df["Year"].min())) + "–" + str(int(df["Year"].max())) + '</span>', unsafe_allow_html=True)
+    st.caption("Model: TF-IDF + Cosine Similarity  Features: Genre · Director · Cast · Description · Rating · Year · Votes")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# PAGE: RECOMMEND
-# ══════════════════════════════════════════════════════════════════════════════
-if "Recommend" in page:
+# ── HEADER ────────────────────────────────────────────────────────────────────
+st.markdown(
+    '<span class="imdb-badge">IMDb</span>'
+    '<span style="font-size:2.2rem;font-weight:800;vertical-align:middle">🎬 Movie Recommendation Engine</span>',
+    unsafe_allow_html=True
+)
+st.markdown("<p style='color:#888;margin-top:0.2rem'>Content-based filtering using genre, cast, director &amp; numeric features</p>",
+            unsafe_allow_html=True)
 
-    st.markdown('<div class="main-title">🎬 Movie Recommendation Engine</div>', unsafe_allow_html=True)
-    st.markdown('<div class="main-sub">Content-based filtering using genre, cast, director &amp; numeric features</div>', unsafe_allow_html=True)
+# Stats row
+s1, s2, s3, s4 = st.columns(4)
+with s1:
+    st.markdown('<div class="stat-label">Total Movies</div><div class="stat-value">' + str(len(df)) + '</div>', unsafe_allow_html=True)
+with s2:
+    st.markdown('<div class="stat-label">Directors</div><div class="stat-value">' + str(df["Director"].nunique()) + '</div>', unsafe_allow_html=True)
+with s3:
+    st.markdown('<div class="stat-label">Genres</div><div class="stat-value">' + str(len(ALL_GENRES)) + '</div>', unsafe_allow_html=True)
+with s4:
+    st.markdown('<div class="stat-label">Year Range</div><div class="stat-value">' + str(int(df["Year"].min())) + ' – ' + str(int(df["Year"].max())) + '</div>', unsafe_allow_html=True)
 
-    # Search row
-    col_search, col_model, col_n = st.columns([4, 1.5, 1.5])
-    with col_search:
-        search_input = st.text_input("Search a movie", placeholder="e.g. Inception, The Dark Knight…",
-                                     label_visibility="visible")
-    with col_model:
-        model_choice = st.selectbox("Model", ["Cosine Similarity", "Smart Ranking"])
-    with col_n:
-        top_n = st.slider("Number of recommendations", 3, 20, 10)
+st.markdown("<br>", unsafe_allow_html=True)
 
-    # Match search input to titles
-    matched_title = None
-    if search_input:
-        hits = [t for t in ALL_TITLES if search_input.lower() in t.lower()]
-        if hits:
-            matched_title = hits[0]
-
-    # Seed movie display
-    if matched_title:
-        seed = df[df["Title"] == matched_title].iloc[0]
-        st.markdown(
-            '<div class="seed-card">'
-            '<div class="seed-title">' + seed["Title"] + '</div>'
-            '<div class="seed-meta">'
-            '🎭 ' + seed["Genre"] + ' &nbsp;|&nbsp; '
-            '⭐ ' + str(seed["Rating"]) + ' &nbsp;|&nbsp; '
-            '📅 ' + str(int(seed["Year"])) + ' &nbsp;|&nbsp; '
-            '🎬 ' + seed["Director"] + ' &nbsp;|&nbsp; '
-            '⏱️ ' + str(int(seed["Runtime_(Minutes)"])) + ' min'
-            '</div>'
-            '</div>',
-            unsafe_allow_html=True
-        )
-
-        # Column labels row
-        st.markdown(
-            '<div class="col-labels">'
-            '<span>Title</span>'
-            '<span>Genre</span>'
-            '<span>Rating</span>'
-            '<span>Year</span>'
-            '<span>Director</span>'
-            '<span>Similarity</span>'
-            '</div>',
-            unsafe_allow_html=True
-        )
-
-        # Get recommendations
-        if model_choice == "Cosine Similarity":
-            recs = recommend(matched_title, df, tfidf_mat, num_mat, top_n)
-        else:
-            recs = smart_search(df, None,
-                                (int(df["Year"].min()), int(df["Year"].max())),
-                                0.0, "Any", top_n)
-
-        if recs is None or recs.empty:
-            st.warning("No results found. Try a different title.")
-        else:
-            st.markdown(
-                '<div class="results-header">🏆 Top ' + str(len(recs)) +
-                ' recommendations — ' + model_choice + '</div>',
-                unsafe_allow_html=True
-            )
-
-            rows_html = ""
-            for _, row in recs.iterrows():
-                title  = row["Title"]
-                genre  = row["Main_Genre"]
-                rating = row["Rating"]
-                year   = int(row["Year"])
-                direc  = row["Director"]
-                sim    = row["Similarity"]
-                rows_html += (
-                    '<div class="movie-row">'
-                    '<div class="row-title">' + title + '</div>'
-                    '<div class="row-genre">' + genre + '</div>'
-                    '<div class="row-rating"><span class="star-icon">★</span>' + str(rating) + '</div>'
-                    '<div class="row-year">' + str(year) + '</div>'
-                    '<div class="row-dir">' + direc + '</div>'
-                    '<div class="row-sim">' + str(sim) + '</div>'
-                    '</div>'
-                )
-            st.markdown(
-                '<div style="border:1px solid #e8e8e8;border-radius:0 0 10px 10px;overflow:hidden">'
-                + rows_html + '</div>',
-                unsafe_allow_html=True
-            )
-    else:
-        if search_input:
-            st.warning("No movie found matching \"" + search_input + "\". Try another title.")
-        else:
-            st.info("👆 Type a movie name above to get recommendations.")
+# ── TABS ──────────────────────────────────────────────────────────────────────
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "🎯 Recommendations", "📊 Data Explorer",
+    "🧠 How It Works", "⭐ Rating-Based ML", "💰 Revenue Prediction"
+])
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# PAGE: EDA
-# ══════════════════════════════════════════════════════════════════════════════
-elif "EDA" in page:
-    st.markdown('<div class="main-title">📊 Exploratory Data Analysis</div>', unsafe_allow_html=True)
-    st.markdown('<div class="main-sub">Visual overview of the IMDB dataset</div>', unsafe_allow_html=True)
+# ════════════════════════════════════════════════════════
+# TAB 1 — RECOMMENDATIONS
+# ════════════════════════════════════════════════════════
+with tab1:
+    if "Find Similar" in mode:
+        st.markdown("### Find Similar Movies")
+        st.markdown("Pick a movie you enjoyed:")
+        selected = st.selectbox("", ALL_TITLES, label_visibility="collapsed")
 
-    # Metric cards
-    st.markdown(
-        '<div class="metric-row">'
-        '<div class="metric-card"><div class="metric-val">' + str(len(df)) + '</div><div class="metric-label">Total Movies</div></div>'
-        '<div class="metric-card"><div class="metric-val">' + str(df["Director"].nunique()) + '</div><div class="metric-label">Directors</div></div>'
-        '<div class="metric-card"><div class="metric-val">' + str(round(df["Rating"].mean(), 1)) + '</div><div class="metric-label">Avg Rating</div></div>'
-        '<div class="metric-card"><div class="metric-val">' + str(len(ALL_GENRES)) + '</div><div class="metric-label">Genres</div></div>'
-        '</div>',
-        unsafe_allow_html=True
-    )
+        if st.button("Get Recommendations 🚀"):
+            seed = df[df["Title"] == selected].iloc[0]
 
-    PLOT_BG = "rgba(0,0,0,0)"
-    FONT_COLOR = "#1a1a1a"
-    GRID_COLOR = "rgba(0,0,0,0.06)"
-    ACCENT = "#E53935"
+            with st.expander("About: " + selected, expanded=True):
+                ca, cb = st.columns([2, 1])
+                with ca:
+                    st.markdown(
+                        "**Director:** " + seed["Director"] +
+                        " | **Year:** " + str(int(seed["Year"])) +
+                        " | **Genre:** " + seed["Genre"]
+                    )
+                    st.markdown("**Cast:** " + seed["Actors"])
+                    st.write(seed["Description"])
+                with cb:
+                    st.markdown('<div class="seed-label">IMDb Rating</div><div class="seed-big">⭐ ' + str(seed["Rating"]) + '</div>', unsafe_allow_html=True)
+                    st.markdown('<div class="seed-label">Runtime</div><div class="seed-mid">' + str(int(seed["Runtime_(Minutes)"])) + ' min</div>', unsafe_allow_html=True)
+                    st.markdown('<div class="seed-label">Votes</div><div class="seed-mid">' + f"{int(seed['Votes']):,}" + '</div>', unsafe_allow_html=True)
+
+            recs = get_recs(selected, df, tfidf_mat, num_mat,
+                            genre_filter if genre_filter else None,
+                            year_range, rating_min, director_sel, top_n)
+
+            if recs is None or recs.empty:
+                st.warning("No movies found — try relaxing your filters.")
+            else:
+                st.success("Found " + str(len(recs)) + " recommendations!")
+                for rank, (_, row) in enumerate(recs.iterrows(), 1):
+                    title  = row["Title"]
+                    year   = int(row["Year"])
+                    rat    = row["Rating"]
+                    direc  = row["Director"]
+                    rt     = int(row["Runtime_(Minutes)"])
+                    desc   = str(row["Description"])[:220]
+                    genres = [g.strip() for g in row["Genre"].split(",")]
+                    badges = "".join('<span class="rec-badge">' + g + '</span>' for g in genres)
+                    st.markdown(
+                        '<div class="rec-card">'
+                        '<div class="rec-rank">#' + str(rank) + '</div>'
+                        '<div class="rec-title">' + title + '</div>'
+                        '<div class="rec-meta">🎬 ' + direc + ' &nbsp;|&nbsp; 📅 ' + str(year) + ' &nbsp;|&nbsp; ⭐ ' + str(rat) + ' &nbsp;|&nbsp; ⏱ ' + str(rt) + ' min</div>'
+                        '<div>' + badges + '</div>'
+                        '<div class="rec-desc">' + desc + '…</div>'
+                        '</div>',
+                        unsafe_allow_html=True
+                    )
+
+    else:  # Browse by Preference
+        st.markdown("### Browse by Preference")
+        st.info("Set your genre, year, rating and director filters in the sidebar, then click Search.")
+        if st.button("🔍 Search Movies"):
+            results = browse_prefs(df,
+                                   genre_filter if genre_filter else None,
+                                   year_range, rating_min, director_sel, top_n)
+            if results.empty:
+                st.warning("No movies match — try widening your filters.")
+            else:
+                st.success("Found " + str(len(results)) + " movies!")
+                for rank, (_, row) in enumerate(results.iterrows(), 1):
+                    title  = row["Title"]
+                    year   = int(row["Year"])
+                    rat    = row["Rating"]
+                    direc  = row["Director"]
+                    desc   = str(row["Description"])[:220]
+                    genres = [g.strip() for g in row["Genre"].split(",")]
+                    badges = "".join('<span class="rec-badge">' + g + '</span>' for g in genres)
+                    st.markdown(
+                        '<div class="rec-card">'
+                        '<div class="rec-rank">#' + str(rank) + '</div>'
+                        '<div class="rec-title">' + title + '</div>'
+                        '<div class="rec-meta">🎬 ' + direc + ' &nbsp;|&nbsp; 📅 ' + str(year) + ' &nbsp;|&nbsp; ⭐ ' + str(rat) + '</div>'
+                        '<div>' + badges + '</div>'
+                        '<div class="rec-desc">' + desc + '…</div>'
+                        '</div>',
+                        unsafe_allow_html=True
+                    )
+
+
+# ════════════════════════════════════════════════════════
+# TAB 2 — DATA EXPLORER
+# ════════════════════════════════════════════════════════
+with tab2:
+    st.markdown("### Dataset Explorer")
 
     col1, col2 = st.columns(2)
     with col1:
         fig = px.histogram(df, x="Rating", nbins=30, title="Rating Distribution",
-                           color_discrete_sequence=[ACCENT])
+                           color_discrete_sequence=[RED])
         fig.update_layout(paper_bgcolor=PLOT_BG, plot_bgcolor=PLOT_BG,
                           font_color=FONT_COLOR, title_font_color=FONT_COLOR)
         fig.update_xaxes(gridcolor=GRID_COLOR)
@@ -420,13 +373,13 @@ elif "EDA" in page:
 
     with col2:
         gc = df["Main_Genre"].value_counts().reset_index()
-        gc.columns = ["Genre", "Count"]
+        gc.columns = ["Genre","Count"]
         fig = px.bar(gc, x="Count", y="Genre", orientation="h",
-                     color="Count", color_continuous_scale=["#ffcdd2", ACCENT],
+                     color="Count", color_continuous_scale=["#ffcdd2", RED],
                      title="Movies per Genre")
         fig.update_layout(paper_bgcolor=PLOT_BG, plot_bgcolor=PLOT_BG,
                           font_color=FONT_COLOR, title_font_color=FONT_COLOR,
-                          coloraxis_showscale=False, yaxis={"categoryorder": "total ascending"})
+                          coloraxis_showscale=False, yaxis={"categoryorder":"total ascending"})
         fig.update_xaxes(gridcolor=GRID_COLOR)
         st.plotly_chart(fig, use_container_width=True)
 
@@ -445,7 +398,7 @@ elif "EDA" in page:
     with col4:
         yc = df.groupby("Year").size().reset_index(name="Count")
         fig = px.line(yc, x="Year", y="Count", title="Movies Per Year",
-                      markers=True, color_discrete_sequence=[ACCENT])
+                      markers=True, color_discrete_sequence=[RED])
         fig.update_layout(paper_bgcolor=PLOT_BG, plot_bgcolor=PLOT_BG,
                           font_color=FONT_COLOR, title_font_color=FONT_COLOR)
         fig.update_xaxes(gridcolor=GRID_COLOR)
@@ -459,181 +412,228 @@ elif "EDA" in page:
                       font_color=FONT_COLOR, title_font_color=FONT_COLOR)
     st.plotly_chart(fig, use_container_width=True)
 
-    st.subheader("Raw Dataset")
-    q = st.text_input("🔎 Filter by title")
+    st.markdown("### Raw Dataset")
+    q    = st.text_input("🔎 Search title")
     show = df if not q else df[df["Title"].str.contains(q, case=False, na=False)]
     st.dataframe(
-        show[["Title", "Genre", "Director", "Year", "Rating", "Runtime_(Minutes)", "Votes", "Revenue(Crores)"]],
+        show[["Title","Genre","Director","Year","Rating","Runtime_(Minutes)","Votes","Revenue(Crores)"]],
         use_container_width=True, height=400
     )
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# PAGE: MODEL ACCURACY
-# ══════════════════════════════════════════════════════════════════════════════
-elif "Model" in page:
-    st.markdown('<div class="main-title">🧠 Model Accuracy & Insights</div>', unsafe_allow_html=True)
-    st.markdown('<div class="main-sub">How the recommendation engine works</div>', unsafe_allow_html=True)
-
+# ════════════════════════════════════════════════════════
+# TAB 3 — HOW IT WORKS
+# ════════════════════════════════════════════════════════
+with tab3:
+    st.markdown("### How the Recommendation Engine Works")
     st.markdown("""
-### Algorithm: Content-Based Filtering
+The engine uses **Content-Based Filtering** with a hybrid scoring formula:
 
-| Component | Weight | Description |
-|-----------|--------|-------------|
-| **TF-IDF Text Similarity** | 70% | Genre + Director + Cast + Description (5 000 features, bigrams) |
-| **Numerical Similarity** | 30% | Rating · Year · Votes · Runtime — MinMax-normalised |
+| Component | Weight | Details |
+|-----------|--------|---------|
+| **TF-IDF Text Similarity** | 70% | Genre + Director + Cast + Description → 5 000-feature TF-IDF matrix |
+| **Numerical Similarity** | 30% | Rating · Year · Votes · Runtime → MinMax-normalised, cosine similarity |
 
-**Score formula:**
+**Combined score:**
 ```
 final_score = 0.70 × cosine_sim(text) + 0.30 × cosine_sim(numerics)
 ```
+
+**Why Content-Based?**
+- ✅ No cold-start problem — works without any user history
+- ✅ Fully explainable — every recommendation is traceable
+- ✅ Rich IMDB metadata (genre, cast, director, description)
     """)
 
-    PLOT_BG    = "rgba(0,0,0,0)"
-    FONT_COLOR = "#1a1a1a"
-    ACCENT     = "#E53935"
+    col1, col2 = st.columns(2)
+    with col1:
+        ds = df.groupby("Director").agg(Avg_Rating=("Rating","mean"), Movies=("Title","count")).reset_index()
+        ds = ds[ds["Movies"] >= 2].sort_values("Avg_Rating", ascending=False).head(15)
+        fig = px.bar(ds, x="Avg_Rating", y="Director", orientation="h",
+                     color="Avg_Rating", color_continuous_scale=["#ffcdd2", RED],
+                     hover_data=["Movies"], title="Top 15 Directors by Avg Rating")
+        fig.update_layout(paper_bgcolor=PLOT_BG, plot_bgcolor=PLOT_BG,
+                          font_color=FONT_COLOR, title_font_color=FONT_COLOR,
+                          coloraxis_showscale=False, yaxis={"categoryorder":"total ascending"})
+        fig.update_xaxes(range=[7, 9], gridcolor=GRID_COLOR)
+        st.plotly_chart(fig, use_container_width=True)
 
-    ds = df.groupby("Director").agg(Avg_Rating=("Rating","mean"), Movies=("Title","count")).reset_index()
-    ds = ds[ds["Movies"] >= 2].sort_values("Avg_Rating", ascending=False).head(15)
-    fig = px.bar(ds, x="Avg_Rating", y="Director", orientation="h",
-                 color="Avg_Rating", color_continuous_scale=["#ffcdd2", ACCENT],
-                 hover_data=["Movies"], title="Top 15 Directors by Avg Rating (min 2 movies)")
-    fig.update_layout(paper_bgcolor=PLOT_BG, plot_bgcolor=PLOT_BG,
-                      font_color=FONT_COLOR, title_font_color=FONT_COLOR,
-                      coloraxis_showscale=False, yaxis={"categoryorder": "total ascending"})
-    fig.update_xaxes(range=[7, 9])
-    st.plotly_chart(fig, use_container_width=True)
-
-    ga = df.groupby("Main_Genre")["Rating"].mean().sort_values(ascending=False).reset_index()
-    fig = px.bar(ga, x="Main_Genre", y="Rating",
-                 color="Rating", color_continuous_scale=["#ffcdd2", ACCENT],
-                 title="Average Rating by Genre")
-    fig.update_layout(paper_bgcolor=PLOT_BG, plot_bgcolor=PLOT_BG,
-                      font_color=FONT_COLOR, title_font_color=FONT_COLOR,
-                      coloraxis_showscale=False)
-    fig.update_yaxes(range=[5, 8])
-    st.plotly_chart(fig, use_container_width=True)
+    with col2:
+        ga = df.groupby("Main_Genre")["Rating"].mean().sort_values(ascending=False).reset_index()
+        fig = px.bar(ga, x="Main_Genre", y="Rating",
+                     color="Rating", color_continuous_scale=["#ffcdd2", RED],
+                     title="Average Rating by Genre")
+        fig.update_layout(paper_bgcolor=PLOT_BG, plot_bgcolor=PLOT_BG,
+                          font_color=FONT_COLOR, title_font_color=FONT_COLOR,
+                          coloraxis_showscale=False)
+        fig.update_yaxes(range=[5, 8], gridcolor=GRID_COLOR)
+        st.plotly_chart(fig, use_container_width=True)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# PAGE: REVENUE PREDICTION
-# ══════════════════════════════════════════════════════════════════════════════
-elif "Revenue" in page:
+# ════════════════════════════════════════════════════════
+# TAB 4 — RATING-BASED ML (SVD + Ridge, 5-fold CV)
+# ════════════════════════════════════════════════════════
+with tab4:
+    st.markdown("### Rating-Based ML Model")
+    st.markdown("Runs a Ridge regression on top of SVD latent features using 5-fold CV to predict IMDb ratings.")
 
-    # Extra CSS for this page
-    st.markdown("""
-    <style>
-    .rev-title { font-size:2rem; font-weight:800; color:#1a1a1a; margin-bottom:1.2rem; }
-    .rev-label { font-size:0.85rem; color:#888; margin-bottom:0.2rem; }
-    .rev-value { font-size:2.4rem; font-weight:700; color:#1a1a1a; line-height:1.1; }
-    .rev-diff-over  { display:inline-block; background:#fde8e8; color:#E53935; border-radius:20px; padding:3px 12px; font-size:0.82rem; font-weight:600; margin-top:4px; }
-    .rev-diff-under { display:inline-block; background:#e8f5e9; color:#2e7d32; border-radius:20px; padding:3px 12px; font-size:0.82rem; font-weight:600; margin-top:4px; }
-    .rev-metrics-row { display:grid; grid-template-columns:1fr 1fr 1fr; gap:2rem; margin:1.5rem 0 1.8rem; }
-    .movie-info-card {
-        background:#fff; border-radius:14px;
-        border:1px solid #e8e8e8;
-        padding:1.4rem 1.8rem;
-        margin-top:0.5rem;
-        box-shadow:0 2px 8px rgba(0,0,0,0.05);
-    }
-    .mi-title { font-size:1.4rem; font-weight:800; color:#1a1a1a; margin-bottom:0.5rem; }
-    .mi-meta  { font-size:0.9rem; color:#555; display:flex; gap:1rem; flex-wrap:wrap; align-items:center; }
-    .mi-sep   { color:#ccc; }
-    </style>
-    """, unsafe_allow_html=True)
+    if st.button("Run Accuracy Check 📊"):
+        with st.spinner("Training SVD + Ridge model with 5-fold cross-validation…"):
+            # Feature matrix
+            feat_cols = ["Year","Runtime_(Minutes)","Votes","Metascore","Revenue(Crores)"]
+            X_raw = df[feat_cols].fillna(0).values
+            y     = df["Rating"].values
 
-    st.markdown('<div class="rev-title">Predict Revenue for a Movie</div>', unsafe_allow_html=True)
+            # SVD latent features from TF-IDF
+            svd   = TruncatedSVD(n_components=50, random_state=42)
+            X_svd = svd.fit_transform(tfidf_mat)
 
-    # Movie selector — uses actual dataset titles
-    movies_with_rev = df[df["Revenue(Crores)"] > 0].copy()
-    title_options   = sorted(movies_with_rev["Title"].unique().tolist())
+            X = np.hstack([X_svd, MinMaxScaler().fit_transform(X_raw)])
 
+            # Ridge + 5-fold CV predictions
+            ridge     = Ridge(alpha=1.0)
+            y_pred_cv = cross_val_predict(ridge, X, y, cv=5)
+
+            rmse = round(np.sqrt(mean_squared_error(y, y_pred_cv)), 4)
+            mae  = round(mean_absolute_error(y, y_pred_cv), 4)
+
+        # Metrics row
+        m1, m2, m3 = st.columns(3)
+        with m1:
+            st.markdown('<div class="big-metric-label">RMSE ❓</div><div class="big-metric-value">' + str(rmse) + '</div>', unsafe_allow_html=True)
+        with m2:
+            st.markdown('<div class="big-metric-label">MAE ❓</div><div class="big-metric-value">' + str(mae) + '</div>', unsafe_allow_html=True)
+        with m3:
+            st.markdown('<div class="big-metric-label">Rating Scale</div><div class="big-metric-value">1 – 10</div>', unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # Actual vs Predicted scatter (matches screenshot 2)
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=y, y=y_pred_cv,
+            mode="markers",
+            marker=dict(color=RED, opacity=0.6, size=7),
+            name="Movies"
+        ))
+        # Perfect-prediction line
+        mn, mx = float(y.min()), float(y.max())
+        fig.add_trace(go.Scatter(
+            x=[mn, mx], y=[mn, mx],
+            mode="lines",
+            line=dict(color="#F5C518", dash="dash", width=2),
+            name="Perfect Fit"
+        ))
+        fig.update_layout(
+            title="Actual vs Predicted (5-fold CV)",
+            xaxis_title="Actual Rating",
+            yaxis_title="Predicted Rating",
+            paper_bgcolor=PLOT_BG, plot_bgcolor=PLOT_BG,
+            font_color=FONT_COLOR, title_font_color=FONT_COLOR,
+            legend=dict(orientation="h", y=-0.15)
+        )
+        fig.update_xaxes(gridcolor=GRID_COLOR)
+        fig.update_yaxes(gridcolor=GRID_COLOR)
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Feature importance
+        ridge.fit(X, y)
+        svd_importance = np.abs(ridge.coef_[:50]).mean()
+        num_importance = np.abs(ridge.coef_[50:]).mean()
+        fi_df = pd.DataFrame({
+            "Feature Group": ["SVD Latent (Text)", "Numerical Features"],
+            "Avg |Coefficient|": [round(svd_importance,4), round(num_importance,4)]
+        })
+        fig2 = px.bar(fi_df, x="Feature Group", y="Avg |Coefficient|",
+                      color="Avg |Coefficient|",
+                      color_continuous_scale=["#ffcdd2", RED],
+                      title="Feature Group Importance")
+        fig2.update_layout(paper_bgcolor=PLOT_BG, plot_bgcolor=PLOT_BG,
+                           font_color=FONT_COLOR, title_font_color=FONT_COLOR,
+                           coloraxis_showscale=False)
+        st.plotly_chart(fig2, use_container_width=True)
+    else:
+        st.info("Click **Run Accuracy Check** to train the SVD + Ridge model and see RMSE, MAE and the Actual vs Predicted plot.")
+
+
+# ════════════════════════════════════════════════════════
+# TAB 5 — REVENUE PREDICTION
+# ════════════════════════════════════════════════════════
+with tab5:
+    st.markdown("### Predict Revenue for a Movie")
     st.markdown("Select a movie:")
-    selected_movie = st.selectbox("", title_options, label_visibility="collapsed")
 
-    predict_clicked = st.button("💰 Predict")
+    movies_with_rev = df[df["Revenue(Crores)"] > 0].copy()
+    title_opts      = sorted(movies_with_rev["Title"].unique().tolist())
+    sel_movie       = st.selectbox("", title_opts, label_visibility="collapsed")
 
-    if predict_clicked and selected_movie:
-        row = movies_with_rev[movies_with_rev["Title"] == selected_movie].iloc[0]
+    if st.button("💰 Predict"):
+        row = movies_with_rev[movies_with_rev["Title"] == sel_movie].iloc[0]
 
-        # ── Linear-regression-style prediction using genre + rating + votes ──
         genre_df      = df[df["Main_Genre"] == row["Main_Genre"]]
-        genre_avg_rev = genre_df["Revenue(Crores)"].mean()
+        genre_avg     = genre_df["Revenue(Crores)"].mean()
         rating_factor = row["Rating"] / df["Rating"].mean()
         votes_factor  = np.log1p(row["Votes"]) / np.log1p(df["Votes"].mean())
-        predicted_rev = round(genre_avg_rev * rating_factor * votes_factor * 1.15, 1)
-        actual_rev    = round(row["Revenue(Crores)"], 1)
-        diff          = round(abs(predicted_rev - actual_rev), 1)
-        over          = predicted_rev >= actual_rev
+        predicted     = round(genre_avg * rating_factor * votes_factor * 1.15, 1)
+        actual        = round(row["Revenue(Crores)"], 1)
+        diff          = round(abs(predicted - actual), 1)
+        over          = predicted >= actual
 
-        # ── 3-column metrics (matches screenshot layout) ──
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            st.markdown('<div class="rev-label">Predicted Revenue</div>', unsafe_allow_html=True)
-            st.markdown('<div class="rev-value">Rs. ' + str(predicted_rev) + ' Cr</div>', unsafe_allow_html=True)
-
-        with col2:
-            st.markdown('<div class="rev-label">Actual Revenue</div>', unsafe_allow_html=True)
-            st.markdown('<div class="rev-value">Rs. ' + str(actual_rev) + ' Cr</div>', unsafe_allow_html=True)
-
-        with col3:
-            badge_class = "rev-diff-over" if over else "rev-diff-under"
-            arrow       = "↑ Over by" if over else "↓ Under by"
-            st.markdown('<div class="rev-label">Difference</div>', unsafe_allow_html=True)
-            st.markdown('<div class="rev-value">Rs. ' + str(diff) + ' Cr</div>', unsafe_allow_html=True)
+        # 3-col metrics (matches screenshot)
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.markdown('<div class="big-metric-label">Predicted Revenue</div><div class="big-metric-value">Rs. ' + str(predicted) + ' Cr</div>', unsafe_allow_html=True)
+        with c2:
+            st.markdown('<div class="big-metric-label">Actual Revenue</div><div class="big-metric-value">Rs. ' + str(actual) + ' Cr</div>', unsafe_allow_html=True)
+        with c3:
+            badge_cls = "background:#fde8e8;color:#c62828" if over else "background:#e8f5e9;color:#2e7d32"
+            arrow     = "↑ Over by" if over else "↓ Under by"
             st.markdown(
-                '<span class="' + badge_class + '">' + arrow + ' ' + str(diff) + ' Cr</span>',
+                '<div class="big-metric-label">Difference</div>'
+                '<div class="big-metric-value">Rs. ' + str(diff) + ' Cr</div>'
+                '<span style="' + badge_cls + ';border-radius:20px;padding:3px 12px;font-size:0.82rem;font-weight:600;margin-top:6px;display:inline-block">'
+                + arrow + ' ' + str(diff) + ' Cr</span>',
                 unsafe_allow_html=True
             )
 
-        # ── Movie info card (matches screenshot bottom card) ──
-        votes_fmt  = f"{int(row['Votes']):,}"
-        runtime    = int(row["Runtime_(Minutes)"])
-        metascore  = int(row["Metascore"]) if row["Metascore"] > 0 else "N/A"
-        year       = int(row["Year"])
-        rating     = row["Rating"]
-
+        # Movie info card
+        votes_fmt = f"{int(row['Votes']):,}"
+        rt        = int(row["Runtime_(Minutes)"])
+        meta      = int(row["Metascore"]) if row["Metascore"] > 0 else "N/A"
+        yr        = int(row["Year"])
         st.markdown(
-            '<div class="movie-info-card">'
-            '<div class="mi-title">' + selected_movie + '</div>'
-            '<div class="mi-meta">'
-            '<span>⭐ ' + str(rating) + '</span>'
-            '<span class="mi-sep">|</span>'
+            '<div class="rec-card" style="margin-top:1.5rem">'
+            '<div style="font-size:1.4rem;font-weight:800;margin-bottom:0.5rem">' + sel_movie + '</div>'
+            '<div style="font-size:0.9rem;color:#555;display:flex;gap:1rem;flex-wrap:wrap">'
+            '<span>⭐ ' + str(row["Rating"]) + '</span>'
+            '<span style="color:#ccc">|</span>'
             '<span>🎟 ' + votes_fmt + ' votes</span>'
-            '<span class="mi-sep">|</span>'
-            '<span>Metascore: ' + str(metascore) + '</span>'
-            '<span class="mi-sep">|</span>'
-            '<span>⏱ ' + str(runtime) + ' min</span>'
-            '<span class="mi-sep">|</span>'
-            '<span>📅 ' + str(year) + '</span>'
-            '</div>'
-            '</div>',
+            '<span style="color:#ccc">|</span>'
+            '<span>Metascore: ' + str(meta) + '</span>'
+            '<span style="color:#ccc">|</span>'
+            '<span>⏱ ' + str(rt) + ' min</span>'
+            '<span style="color:#ccc">|</span>'
+            '<span>📅 ' + str(yr) + '</span>'
+            '</div></div>',
             unsafe_allow_html=True
         )
 
-        # ── Bar chart: predicted vs actual for similar genre movies ──
-        st.markdown("<br>", unsafe_allow_html=True)
-        comp = genre_df[["Title", "Revenue(Crores)"]].dropna().sort_values("Revenue(Crores)", ascending=False).head(12).copy()
+        # Comparison chart
+        comp = genre_df[["Title","Revenue(Crores)"]].dropna()
+        comp = comp[comp["Revenue(Crores)"] > 0].sort_values("Revenue(Crores)", ascending=False).head(12).copy()
         comp["Type"] = "Actual"
-        pred_row = pd.DataFrame([{"Title": selected_movie + " (Predicted)", "Revenue(Crores)": predicted_rev, "Type": "Predicted"}])
+        pred_row = pd.DataFrame([{"Title": sel_movie + " (Predicted)", "Revenue(Crores)": predicted, "Type": "Predicted"}])
         comp = pd.concat([comp, pred_row], ignore_index=True)
 
-        PLOT_BG = "rgba(0,0,0,0)"
-        fig = px.bar(
-            comp, x="Title", y="Revenue(Crores)", color="Type",
-            color_discrete_map={"Actual": "#e0e0e0", "Predicted": "#E53935"},
-            title="Revenue Comparison — " + row["Main_Genre"] + " Movies"
-        )
-        fig.update_layout(
-            paper_bgcolor=PLOT_BG, plot_bgcolor=PLOT_BG,
-            font_color="#1a1a1a", title_font_color="#1a1a1a",
-            xaxis_tickangle=-35, legend_title_text="",
-            xaxis_title="", yaxis_title="Revenue (Crores)"
-        )
-        fig.update_xaxes(gridcolor="rgba(0,0,0,0.06)")
-        fig.update_yaxes(gridcolor="rgba(0,0,0,0.06)")
+        fig = px.bar(comp, x="Title", y="Revenue(Crores)", color="Type",
+                     color_discrete_map={"Actual": "#e0e0e0", "Predicted": RED},
+                     title="Revenue Comparison — " + row["Main_Genre"] + " Movies")
+        fig.update_layout(paper_bgcolor=PLOT_BG, plot_bgcolor=PLOT_BG,
+                          font_color=FONT_COLOR, title_font_color=FONT_COLOR,
+                          xaxis_tickangle=-35, legend_title_text="",
+                          xaxis_title="", yaxis_title="Revenue (Crores)")
+        fig.update_xaxes(gridcolor=GRID_COLOR)
+        fig.update_yaxes(gridcolor=GRID_COLOR)
         st.plotly_chart(fig, use_container_width=True)
-
-    elif not predict_clicked:
-        st.info("👆 Select a movie and click Predict to see the revenue forecast.") 
+    else:
+        st.info("Select a movie and click **Predict** to see the revenue forecast.")
